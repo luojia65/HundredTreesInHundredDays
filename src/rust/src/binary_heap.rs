@@ -1,318 +1,317 @@
 use core::alloc::{Alloc, Layout, AllocErr};
+use core::cmp::Ordering;
 use core::fmt::{self, Debug};
-use core::marker::PhantomData;
-use core::mem::{align_of, size_of};
+use core::mem;
 use core::ptr::{self, NonNull};
-use std::alloc::System;
+use std::alloc::Global;
 
-const DEFAULT_CAPACITY: usize = 16;
-
-pub struct BinaryHeap<T: Ord> {
-    ptr: Option<NonNull<T>>,
+pub struct BinaryHeap<T: Ord, A: Alloc = Global> {
+    vec: RawVec<T, A>,
     len: usize,
-    cap: usize,
-    a: System,
-    layout: Layout,
-    _marker: PhantomData<T>,
 }
 
-impl<T: Ord> BinaryHeap<T> {
 
+impl<T: Ord> BinaryHeap<T, Global> {
     pub fn new() -> Self {
-        Self::with_capacity(DEFAULT_CAPACITY)
+        Self::new_in(Global)
     }
 
     pub fn with_capacity(cap: usize) -> Self {
-        let size_of_t = size_of::<T>();
-        let alloc_size = cap.checked_mul(size_of_t)
-            .expect("Capacity overflow");
-        let layout = Layout::from_size_align(align_of::<T>(), alloc_size).unwrap();
-        BinaryHeap {
-            ptr: None,
-            len: 0,
-            cap,
-            a: System,
-            layout, 
-            _marker: PhantomData,
+        Self::with_capacity_in(cap, Global)
+    }
+}
+
+impl<T: Ord, A: Alloc> BinaryHeap<T, A> {
+    pub fn new_in(a: A) -> Self {
+        Self {
+            vec: RawVec::new_in(a),
+            len: 0
         }
     }
 
-    pub fn push(&mut self, value: T) {
-        self.try_push(value).expect("Out of memory");
-    }
-
-    fn try_push(&mut self, value: T) -> Result<(), AllocErr> {
-        if self.ptr == None || self.len == self.cap {
-            self.buf_double()?;
-        }
-        if let Some(_ptr) = self.ptr {
-            self.len += 1;
-            unsafe { ptr::write(self.as_mut_ptr().add(self.len), value) };
-            let mut now = self.len;
-            while now > 1 {
-                let next = now >> 1;
-                let now_ptr = unsafe { self.as_mut_ptr().add(now) };
-                let next_ptr = unsafe { self.as_mut_ptr().add(next) };
-                if unsafe { &*now_ptr } < unsafe { &*next_ptr } {
-                    unsafe { ptr::swap(now_ptr, next_ptr) };
-                }
-                now = next;
-            } 
-        }
-        Ok(())
-    }
-
-    pub fn pop(&mut self) -> Option<T> {
-        if !self.is_empty() {
-            let ans = unsafe { ptr::read(self.as_mut_ptr().add(1)) };
-            unsafe { ptr::swap(self.as_mut_ptr().add(1), self.as_mut_ptr().add(self.len)) };
-            self.len -= 1;
-            let mut now = 1;
-            loop {
-                let mut next = now << 1;
-                if next > self.len {
-                    break;
-                }
-                let next_ptr = unsafe { self.as_mut_ptr().add(next) };
-                let now_ptr = unsafe { self.as_mut_ptr().add(now) };
-                if (next + 1) <= self.len && unsafe { &*self.as_mut_ptr().add(next + 1) 
-                    < &*next_ptr } {
-                    next += 1;
-                }
-                let next_ptr = unsafe { self.as_mut_ptr().add(next) };
-                unsafe {
-                    if &*next_ptr < &*now_ptr  {
-                        ptr::swap(now_ptr,  next_ptr);
-                    }
-                }
-                now = next;
-            }
-            Some(ans)
-        } else {
-            None
+    pub fn with_capacity_in(cap: usize, a: A) -> Self {
+        Self {
+            vec: RawVec::with_capacity_in(cap, a),
+            len: 0
         }
     }
+    
+    pub fn cap(&self) -> usize {
+        self.vec.cap()
+    } 
 
-    pub fn peek(&self) -> Option<&T> {
-        if !self.is_empty() {            
-            let ans = unsafe { &*self.as_mut_ptr().add(1) };
-            Some(ans)
-        } else {
-            None
-        }
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.vec.as_mut_ptr()
+    }
+    
+    pub fn alloc(&self) -> &A {
+        self.vec.alloc()
+    }
+
+    pub fn alloc_mut(&mut self) -> &mut A {
+        self.vec.alloc_mut()
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        self.len 
     }
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+}
 
-    pub fn clear(&mut self) {
-        if self.len > 0 {
-            let mut cur_ptr = self.as_mut_ptr();
-            for _i in 1..=self.len {
-                unsafe { 
-                    cur_ptr = cur_ptr.add(1);
-                    ptr::drop_in_place(cur_ptr); 
-                };
+impl<T: Ord, A: Alloc> BinaryHeap<T, A> {
+    #[inline]
+    fn swap(&mut self, a: usize, b: usize) {
+        unsafe {
+            let a_ptr = self.as_mut_ptr().add(a);
+            let b_ptr = self.as_mut_ptr().add(b);
+            ptr::swap_nonoverlapping(a_ptr, b_ptr, mem::size_of::<T>());
+        }
+    }
+
+    #[inline]
+    fn cmp_at(&self, a: usize, b: usize) -> Ordering {
+        unsafe {
+            let a = &ptr::read(self.as_mut_ptr().add(a));
+            let b = &ptr::read(self.as_mut_ptr().add(b));
+            a.cmp(b)
+        }
+    }
+
+    #[inline]
+    fn set(&mut self, index: usize, value: T) {
+        unsafe {
+            let ptr = self.as_mut_ptr().add(index);
+            ptr::write(ptr, value);
+        }
+    }
+
+    #[inline]
+    fn get_ref_at(&self, index: usize) -> &T {
+        unsafe {
+            &*self.as_mut_ptr().add(index)
+        }
+    }
+
+    #[inline]
+    fn get_at(&self, index: usize) -> T {
+        unsafe {
+            ptr::read(self.as_mut_ptr().add(index))
+        }
+    }
+
+    pub fn peek(&self) -> Option<&T> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(self.get_ref_at(1))
+        }
+    }
+
+    pub fn push(&mut self, value: T) {
+        if self.is_empty() || self.len() == self.cap() - 1 {
+            self.vec.double();
+        }
+        self.len += 1;
+        self.set(self.len, value);
+        let mut cur = self.len;
+        while cur > 1 {
+            let fa = cur >> 1;
+            if self.cmp_at(cur, fa) == Ordering::Less {
+                self.swap(cur, fa);
+            }
+            cur = fa;
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        if self.is_empty() {
+            return None;
+        }
+        let ans = self.get_at(1);
+        self.swap(1, self.len);
+        self.len -= 1;
+        let mut cur = 1;
+        loop {
+            let mut nxt = cur << 1;
+            if nxt > self.len {
+                break;
+            }
+            if nxt <= self.len && self.cmp_at(nxt + 1, nxt) == Ordering::Less {
+                nxt += 1;
+            }
+            if self.cmp_at(nxt, cur) == Ordering::Less {
+                self.swap(nxt, cur);
+            }
+            cur = nxt;
+        }
+        Some(ans)
+    }
+}
+
+struct RawVec<T: Ord, A: Alloc = Global> {
+    ptr: *mut T,
+    cap: usize,
+    a: A,
+}
+
+const DEFAULT_CAPACITY: usize = 4;
+
+impl<T: Ord, A: Alloc> RawVec<T, A> {
+
+    pub fn cap(&self) -> usize {
+        self.cap
+    }
+
+    pub fn new_in(a: A) -> Self {
+        Self {
+            ptr: ptr::null_mut(),
+            cap: 0,
+            a, 
+        }
+    }
+
+    pub fn with_capacity_in(cap: usize, a: A) -> Self {
+        Self::allocate_in(cap, a)
+    }
+
+    fn allocate_in(cap: usize, mut a: A) -> Self {
+        unsafe {
+            let elem_size = mem::size_of::<T>();
+            let alloc_size = cap.checked_mul(elem_size)
+                .expect("Capacity overflow!");
+            let ptr = if alloc_size == 0 {
+                ptr::null_mut()
+            } else {
+                let align = mem::align_of::<T>();
+                let layout = Layout::from_size_align(alloc_size, align).unwrap();
+                let ptr = a.alloc(layout).unwrap();
+                ptr.cast().as_ptr()
+            };
+            Self {
+                ptr,
+                cap,
+                a
             }
         }
-        if let Some(ptr) = self.ptr {
-            unsafe { self.a.dealloc(ptr.cast::<u8>(), self.layout) };
-            self.ptr = None;
-        }
-        self.len = 0;
-        self.cap = DEFAULT_CAPACITY;
     }
 
-    pub fn into_iter(self) -> IntoIter<T> {
-        IntoIter {
-            inner: self
-        }
-    }  
-
-    fn buf_double(&mut self) -> Result<(), AllocErr> {
-        if let Some(ptr) = self.ptr {
-            self.cap *= 2;
-            let new_size = self.cap.checked_mul(size_of::<T>())
-                .expect("Capacity overflow when doubling buffer");
-            let new_ptr = unsafe { self.a.realloc(ptr.cast::<u8>(), self.layout, new_size) }?;
-            unsafe { ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.cast::<T>().as_ptr(), self.cap) };
-            self.ptr = Some(new_ptr.cast::<T>());
-        } else {
-            self.ptr = Some(unsafe { self.a.alloc(self.layout)? }.cast::<T>());
-        }
-        Ok(())
-    }
-
-    fn as_mut_ptr(&self) -> *mut T { 
-        self.ptr.unwrap().as_ptr()
-    }
-}
-
-impl<T: Ord> Drop for BinaryHeap<T> {
-    fn drop(&mut self) {
-        self.clear()
-    }
-}
-
-impl<T: Ord + Debug> Debug for BinaryHeap<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "[")?;
-        if self.len > 0 {
-            let mut cur_ptr = self.as_mut_ptr();
-            for i in 1..=self.len {
-                unsafe { 
-                    cur_ptr = cur_ptr.add(1);
-                    write!(f, "{:?}", &*cur_ptr)?;
-                };
-                if i != self.len {
-                    write!(f, ", ");
+    pub fn double(&mut self) {
+        unsafe {
+            let elem_size = mem::size_of::<T>();
+            let (new_cap, new_ptr) = match self.current_layout() {
+                Some(cur_layout) => {
+                    let new_cap = 2 * self.cap;
+                    let new_size = new_cap * elem_size;
+                    let new_ptr = self.a.realloc(NonNull::new(self.ptr).unwrap().cast(), cur_layout, new_size)
+                        .expect("Realloc error!");
+                    if new_ptr.cast().as_ptr() != self.ptr {
+                        ptr::copy(new_ptr.cast().as_ptr(), self.ptr, elem_size * self.cap);
+                    }
+                    (new_cap, new_ptr)
+                },
+                None => {
+                    let new_cap = DEFAULT_CAPACITY;
+                    let new_ptr = self.a.alloc_array(new_cap)
+                        .expect("Alloc error!");
+                    (new_cap, new_ptr)
                 }
-            }
+            };
+            self.ptr = new_ptr.cast().as_ptr();
+            self.cap = new_cap;
         }
-        write!(f, "]")?;
-        Ok(())
+    } 
+
+    fn current_layout(&self) -> Option<Layout> {
+        if self.cap == 0 {
+            return None;
+        }
+        unsafe {
+            let align = mem::align_of::<T>();
+            let size = mem::size_of::<T>() * self.cap;
+            Some(Layout::from_size_align_unchecked(size, align))
+        }
+    }
+
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.ptr
+    }
+
+    pub fn alloc(&self) -> &A {
+        &self.a
+    }
+
+    pub fn alloc_mut(&mut self) -> &mut A {
+        &mut self.a
     }
 }
 
-impl<T: Ord + Clone> Clone for BinaryHeap<T> {
-    fn clone(&self) -> Self {
-        if let Some(ptr) = self.ptr {
-            let layout = self.layout;
-            let new_ptr = unsafe { System.alloc(layout) }
-                .expect("Failed to alloc");
-            unsafe { ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.cast::<T>().as_ptr(), self.cap + 1) };
-            
-        println!("Clone!");
-            BinaryHeap {
-                ptr: Some(new_ptr.cast::<T>()),
-                len: self.len,
-                cap: self.cap,
-                a: System,
-                layout,
-                _marker: PhantomData,
-            }
-        } else {
-            BinaryHeap::with_capacity(self.cap)
-        }
+impl<T: Ord> RawVec<T, Global> {
+
+    pub fn new() -> Self {
+        Self::new_in(Global)
+    }
+
+    pub fn with_capacity(cap: usize) -> Self {
+        Self::with_capacity_in(cap, Global)
     }
 }
 
-pub struct IntoIter<T: Ord> {
-    inner: BinaryHeap<T>
-}
 
-impl<T: Ord> Iterator for IntoIter<T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<T> {
-        self.inner.pop()
+impl<T: Ord, A: Alloc> Drop for RawVec<T, A> {
+    fn drop(&mut self) {
+        if let Some(cur_layout) = self.current_layout() {
+            unsafe { self.a.dealloc(NonNull::new(self.ptr).unwrap().cast(), cur_layout) };
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::BinaryHeap;
+mod raw_memory_tests {
+    use luos_memory_sandbox::{LuosMemory, LuosAlloc};
+    use super::*;
+    #[test]
+    fn raw_vec_create() {
+        let a = LuosAlloc::new(LuosMemory::new());
+        let mut vec: RawVec<u128, LuosAlloc> = RawVec::new_in(a);
+        vec.double();
+        vec.double();
+        drop(vec);
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use luos_memory_sandbox::{LuosMemory, LuosAlloc};
+    use super::*;
+    #[test]
+    fn test_push() {
+        let a = LuosAlloc::new(LuosMemory::new());
+        let mut bh: BinaryHeap<u8, LuosAlloc> = BinaryHeap::new_in(a);
+        for i in 1..=9 {
+            bh.push(2 * i);
+        }
+        for i in 1..=9 {
+            bh.push(2 * i - 1);
+        }
+        assert_eq!(&bh.alloc().inner()[..=bh.len()], 
+            &[0, 1, 2, 5, 8, 3, 6, 9, 13, 17, 10, 4, 12, 7, 14, 11, 16, 15, 18]);
+    }
 
     #[test]
-    fn test_heap_sort() {
-        let mut bh = BinaryHeap::new();
-        let data = vec![4, 5, 7, 3, 2, 1, 6, 9, 8];
-        for i in data {
+    fn test_pop() {
+        let a = LuosAlloc::new(LuosMemory::new_filled_with(0xCC));
+        let mut bh: BinaryHeap<u8, LuosAlloc> = BinaryHeap::new_in(a);
+        for &i in &[1, 7, 2, 8, 9, 3, 4, 5, 6] {
             bh.push(i);
         }
-        let mut result = Vec::with_capacity(9);
-        for i in bh.into_iter() {
-            result.push(i);
-        }
-        assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    }
-
-    #[test]
-    fn test_peek_len() {
-        let mut bh = BinaryHeap::new();
-        bh.push(4);
-        assert_eq!((Some(&4), Some(&4), 1), (bh.peek(), bh.peek(), bh.len()));
-        bh.push(5);
-        assert_eq!((Some(&4), Some(&4), 2), (bh.peek(), bh.peek(), bh.len()));
-        bh.push(3);
-        assert_eq!((Some(&3), Some(&3), 3), (bh.peek(), bh.peek(), bh.len()));
-        bh.pop();
-        assert_eq!((Some(&4), Some(&4), 2), (bh.peek(), bh.peek(), bh.len()));
-        bh.pop();
-        assert_eq!((Some(&5), Some(&5), 1), (bh.peek(), bh.peek(), bh.len()));
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut bh = BinaryHeap::new();
-        bh.push(5);
-        bh.push(1);
-        assert!(!bh.is_empty());
-        assert_eq!(Some(&1), bh.peek());
-        bh.clear();
-        assert!(bh.is_empty());
-        assert_eq!(None, bh.peek());
-    }
-
-    #[test]
-    fn test_drop_safe() {
-        #[derive(Eq, PartialEq, Ord, PartialOrd)]
-        struct Data(i128);
-
-        impl Drop for Data {
-            fn drop(&mut self) {
-                println!("Data: {}", self.0);
-            }
-        }
-
-        let mut bh = BinaryHeap::new();
-        for i in 1..=10 {
-            bh.push(Data(i));
-        }
-        bh.peek(); // does not drop
-        drop(bh.pop());
-        println!("Before drop");
-        drop(bh);
-        println!("After drop");
-    }
-
-    #[test]
-    fn test_debug() {
-        let mut bh = BinaryHeap::new();
-        assert_eq!(format!("{:?}", bh), "[]");
-        for i in 0..5 {
-            bh.push(i)
-        }
-        assert_eq!(format!("{:?}", bh), "[0, 1, 2, 3, 4]");
-    }
-
-    #[test]
-    fn test_batch_push() {
-        let mut bh = BinaryHeap::new();
-        for i in (0..1000u128).rev() {
-            bh.push(i);
-            println!("{:?}", bh);
-        }
-        for i in 0..1000 {
-            assert_eq!(Some(i), bh.pop());
-        }
-
-    }
-
-    #[test]
-    fn test_clone() {
-        let mut bh = BinaryHeap::new();
-        for i in 0..50 {
-            bh.push(i);
-        }
-        let mut bh2 = bh.clone();
-        for i in 0..50 {
-            assert_eq!(Some(i), bh2.pop());
+        println!("{:?}", &bh.alloc().inner()[..=bh.len()]);
+        for i in 1..=9 {
+            // assert_eq!(bh.pop(), Some(i));
+            bh.pop();
+        println!("{:?}", &bh.alloc().inner()[..12]);
         }
     }
 }

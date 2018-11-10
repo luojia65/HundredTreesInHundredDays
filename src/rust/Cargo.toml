@@ -5,3 +5,7 @@ authors = ["luojia65 <me@luojia.cc>"]
 edition = "2018"
 
 [dependencies]
+
+[dependencies.luos_memory_sandbox]
+version = "*"
+path = "C:/Users/luojia/Projects/luos_memory_sandbox"
