@@ -2,10 +2,10 @@
 name = "hundred_trees_rust"
 version = "0.1.0"
 dependencies = [
- "luos_memory_sandbox 0.0.0",
+ "luos_memory_sandbox 0.0.1",
 ]
 
 [[package]]
 name = "luos_memory_sandbox"
-version = "0.0.0"
+version = "0.0.1"
 

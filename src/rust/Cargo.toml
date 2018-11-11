@@ -7,5 +7,5 @@ edition = "2018"
 [dependencies]
 
 [dependencies.luos_memory_sandbox]
-version = "*"
-path = "C:/Users/luojia/Projects/luos_memory_sandbox"
+version = "0.0.1"
+path = "C:/Users/luojia/Projects/LuosSandboxes"

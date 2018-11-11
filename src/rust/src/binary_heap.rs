@@ -1,4 +1,4 @@
-use core::alloc::{Alloc, Layout, AllocErr};
+use core::alloc::{Alloc, Layout};
 use core::cmp::Ordering;
 use core::fmt::{self, Debug};
 use core::mem;
@@ -10,14 +10,19 @@ pub struct BinaryHeap<T: Ord, A: Alloc = Global> {
     len: usize,
 }
 
-
 impl<T: Ord> BinaryHeap<T, Global> {
     pub fn new() -> Self {
-        Self::new_in(Global)
+        Self {
+            vec: RawVec::new(),
+            len: 0
+        }
     }
 
     pub fn with_capacity(cap: usize) -> Self {
-        Self::with_capacity_in(cap, Global)
+        Self {
+            vec: RawVec::with_capacity(cap),
+            len: 0
+        }
     }
 }
 
@@ -150,6 +155,20 @@ impl<T: Ord, A: Alloc> BinaryHeap<T, A> {
     }
 }
 
+impl<T: Ord + Debug, A: Alloc> Debug for BinaryHeap<T, A> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[")?;
+        for i in 0..self.len() {
+            write!(f, "{:?}", self.get_ref_at(i))?;
+            if i != self.len() - 1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, "]")?;
+        Ok(())
+    }
+}
+
 struct RawVec<T: Ord, A: Alloc = Global> {
     ptr: *mut T,
     cap: usize,
@@ -206,8 +225,10 @@ impl<T: Ord, A: Alloc> RawVec<T, A> {
                     let new_size = new_cap * elem_size;
                     let new_ptr = self.a.realloc(NonNull::new(self.ptr).unwrap().cast(), cur_layout, new_size)
                         .expect("Realloc error!");
+                    println!("old ptr {:?} new ptr {:?}", self.ptr, new_ptr);
+                    println!("old size {:?} new size {:?}", self.cap * elem_size, new_size);
                     if new_ptr.cast().as_ptr() != self.ptr {
-                        ptr::copy(new_ptr.cast().as_ptr(), self.ptr, elem_size * self.cap);
+                        ptr::copy(new_ptr.cast().as_ptr(), self.ptr, self.cap);
                     }
                     (new_cap, new_ptr)
                 },
@@ -258,7 +279,6 @@ impl<T: Ord> RawVec<T, Global> {
     }
 }
 
-
 impl<T: Ord, A: Alloc> Drop for RawVec<T, A> {
     fn drop(&mut self) {
         if let Some(cur_layout) = self.current_layout() {
@@ -269,12 +289,32 @@ impl<T: Ord, A: Alloc> Drop for RawVec<T, A> {
 
 #[cfg(test)]
 mod raw_memory_tests {
-    use luos_memory_sandbox::{LuosMemory, LuosAlloc};
+    use luos_memory_sandbox::*;
     use super::*;
     #[test]
-    fn raw_vec_create() {
+    fn raw_vec_custom() {
         let a = LuosAlloc::new(LuosMemory::new());
-        let mut vec: RawVec<u128, LuosAlloc> = RawVec::new_in(a);
+        let mut vec: RawVec<u128, _> = RawVec::new_in(a);
+        vec.double();
+        vec.double();
+        vec.double();
+        drop(vec);
+    }
+
+    #[test]
+    fn raw_vec_custom_must_replace() {
+        let a = LuosMustReplaceAlloc::new(LuosMemory::new());
+        let mut vec: RawVec<u128, _> = RawVec::new_in(a);
+        vec.double();
+        vec.double();
+        vec.double();
+        drop(vec);
+    }
+
+    #[test]
+    fn raw_vec_global() {
+        let mut vec: RawVec<u128> = RawVec::new();
+        vec.double();
         vec.double();
         vec.double();
         drop(vec);
@@ -307,6 +347,20 @@ mod logic_tests {
             bh.push(i);
         }
         for i in 1..=9 {
+            assert_eq!(bh.pop(), Some(i));
+        }
+        assert_eq!(bh.pop(), None);
+    }
+
+    #[test]
+    fn test_global_alloc() {
+        let mut bh = BinaryHeap::with_capacity(233);
+        for &i in &[1, 7, 2, 8, 9, 3, 4, 5, 6] {
+            println!("{:?}", bh);
+            bh.push(i);
+        }
+        for i in 1..=9 {
+            println!("{:?}", bh);
             assert_eq!(bh.pop(), Some(i));
         }
         assert_eq!(bh.pop(), None);
