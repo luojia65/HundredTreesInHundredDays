@@ -18,34 +18,45 @@ struct binary_heap {
     void push(T value) {
     	if (this->ptr==NULL||this->len==this->cap) 
     		this->buf_double();
-		this->ptr[++this->len]=value;
-		size_t now=this->len,nxt;
-		while(now>1) {
-			nxt=now>>1;
-			if(this->ptr[now]<this->ptr[nxt]) 
-				this->swap(now, nxt);
-			now=nxt;
+		this->ptr[this->len]=value;
+		size_t cur=this->len,fa;
+		while(cur>0) {
+			fa=(cur-1)/2;
+			if(this->ptr[fa]>=this->ptr[cur]) break;
+			this->swap(cur, fa);
+			cur=fa;
 		}
+		this->len++;
     }
     
-    T pop() {
-    	T ans=this->ptr[1];
-    	this->swap(1, this->len--);
-    	size_t now=1,nxt;
-    	while(1) {
-			nxt=now<<1;
-			if(nxt>this->len) break;
-			if((nxt+1)<=this->len && this->ptr[nxt+1]<this->ptr[nxt])
-				nxt++;
-			if(this->ptr[nxt]<this->ptr[now])
-				this->swap(now, nxt);
-			now=nxt;
+    void dump() {
+		size_t j;
+		printf("["); 
+		for (j=0;j<this->len;++j) {
+			printf("%ld, ", this->ptr[j]);
 		}
-		return ans;
+		printf("]\n"); 
+	}
+    
+    T pop() {
+    	T ans=this->ptr[0];
+    	this->len--;
+    	this->swap(0, this->len);
+    	size_t cur=0,nxt;
+    	while(cur<this->len) {
+    		nxt=cur*2+1;
+    		if(nxt+1<this->len&&this->ptr[nxt]<this->ptr[nxt+1])
+    			++nxt;
+    		if(nxt>=this->len||this->ptr[cur]>=this->ptr[nxt])
+    			break;
+    		this->swap(cur, nxt);
+    		cur=nxt;
+		}
+    	return ans;
 	}
 	
 	T peek() {
-		return this->ptr[this->len];
+		return this->ptr[0];
 	}
 	
 	bool is_empty() {
@@ -60,11 +71,14 @@ struct binary_heap {
 	}
     
     void buf_double() {
-		T* new_ptr = (T*)malloc((1+this->cap)*sizeof(T));
-		if(this->ptr!=NULL) {
-			memcpy(new_ptr, this->ptr, (1+this->len)*sizeof(T));
-			free(this->ptr);
+    	T* new_ptr;
+		if(this->ptr!=NULL) {	
 			(this->cap)*=2;
+			new_ptr = (T*)malloc((this->cap)*sizeof(T));
+			memcpy(new_ptr, this->ptr, (this->cap)*sizeof(T));
+			free(this->ptr);
+		} else {
+			new_ptr = (T*)malloc((this->cap)*sizeof(T));
 		}
 		this->ptr = new_ptr;
 	}
@@ -80,7 +94,7 @@ int main() {
 	binary_heap<int> heap;
 	char c;int i;
 	while(~scanf("%c",&c)) {
-		if(c=='i') scanf("%d\n",&i), heap.push(i);
+		if(c=='i') scanf("%d",&i), heap.push(i), getchar();
 		if(c=='o') 
 			if (heap.is_empty()) std::cout<<"pop: empty"<<std::endl;
 			else std::cout<<heap.pop()<<std::endl;
@@ -88,6 +102,9 @@ int main() {
 		if(c=='p') 
 			if (heap.is_empty()) std::cout<<"peak: empty"<<std::endl;
 			else std::cout<<heap.peek()<<std::endl;
+		if(c=='d') 
+			heap.dump();
+			
 	}
     return 0;
 }

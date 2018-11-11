@@ -106,45 +106,44 @@ impl<T: Ord, A: Alloc> BinaryHeap<T, A> {
         if self.is_empty() {
             None
         } else {
-            Some(self.get_ref_at(1))
+            Some(self.get_ref_at(0))
         }
     }
 
     pub fn push(&mut self, value: T) {
-        if self.is_empty() || self.len() == self.cap() - 1 {
+        if self.is_empty() || self.len() == self.cap() {
             self.vec.double();
         }
-        self.len += 1;
         self.set(self.len, value);
         let mut cur = self.len;
-        while cur > 1 {
-            let fa = cur >> 1;
-            if self.cmp_at(cur, fa) == Ordering::Less {
-                self.swap(cur, fa);
+        while cur > 0 {
+            let fa = (cur - 1) >> 1;
+            if self.cmp_at(cur, fa) != Ordering::Less {
+                break;
             }
+            self.swap(cur, fa);
             cur = fa;
         }
+        self.len += 1;
     }
 
     pub fn pop(&mut self) -> Option<T> {
         if self.is_empty() {
             return None;
         }
-        let ans = self.get_at(1);
-        self.swap(1, self.len);
+        let ans = self.get_at(0);
         self.len -= 1;
-        let mut cur = 1;
-        loop {
-            let mut nxt = cur << 1;
-            if nxt > self.len {
-                break;
-            }
-            if nxt <= self.len && self.cmp_at(nxt + 1, nxt) == Ordering::Less {
+        self.swap(0, self.len);
+        let mut cur = 0;
+        while cur < self.len {
+            let mut nxt = (cur << 1) + 1;
+            if nxt + 1 < self.len && self.cmp_at(nxt + 1, nxt) == Ordering::Less {
                 nxt += 1;
             }
-            if self.cmp_at(nxt, cur) == Ordering::Less {
-                self.swap(nxt, cur);
+            if nxt >= self.len || self.cmp_at(nxt, cur) != Ordering::Less {
+                break;    
             }
+            self.swap(nxt, cur);
             cur = nxt;
         }
         Some(ans)
@@ -296,8 +295,8 @@ mod logic_tests {
         for i in 1..=9 {
             bh.push(2 * i - 1);
         }
-        assert_eq!(&bh.alloc().inner()[..=bh.len()], 
-            &[0, 1, 2, 5, 8, 3, 6, 9, 13, 17, 10, 4, 12, 7, 14, 11, 16, 15, 18]);
+        assert_eq!(&bh.alloc().inner()[..bh.len()], 
+            &[1, 2, 5, 8, 3, 6, 9, 13, 17, 10, 4, 12, 7, 14, 11, 16, 15, 18]);
     }
 
     #[test]
@@ -307,11 +306,9 @@ mod logic_tests {
         for &i in &[1, 7, 2, 8, 9, 3, 4, 5, 6] {
             bh.push(i);
         }
-        println!("{:?}", &bh.alloc().inner()[..=bh.len()]);
         for i in 1..=9 {
-            // assert_eq!(bh.pop(), Some(i));
-            bh.pop();
-        println!("{:?}", &bh.alloc().inner()[..12]);
+            assert_eq!(bh.pop(), Some(i));
         }
+        assert_eq!(bh.pop(), None);
     }
 }
