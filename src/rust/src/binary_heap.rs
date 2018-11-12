@@ -116,7 +116,7 @@ impl<T: Ord, A: Alloc> BinaryHeap<T, A> {
     }
 
     pub fn push(&mut self, value: T) {
-        if self.is_empty() || self.len() == self.cap() {
+        if self.is_empty() || self.len == self.cap() {
             self.vec.double();
         }
         self.set(self.len, value);
@@ -169,6 +169,7 @@ impl<T: Ord + Debug, A: Alloc> Debug for BinaryHeap<T, A> {
     }
 }
 
+#[derive(Clone, Debug)]
 struct RawVec<T: Ord, A: Alloc = Global> {
     ptr: *mut T,
     cap: usize,
@@ -225,16 +226,14 @@ impl<T: Ord, A: Alloc> RawVec<T, A> {
                     let new_size = new_cap * elem_size;
                     let new_ptr = self.a.realloc(NonNull::new(self.ptr).unwrap().cast(), cur_layout, new_size)
                         .expect("Realloc error!");
-                    println!("old ptr {:?} new ptr {:?}", self.ptr, new_ptr);
-                    println!("old size {:?} new size {:?}", self.cap * elem_size, new_size);
                     if new_ptr.cast().as_ptr() != self.ptr {
-                        ptr::copy(new_ptr.cast().as_ptr(), self.ptr, self.cap);
+                        ptr::copy(new_ptr.cast().as_ptr(), self.ptr, self.cap* elem_size);
                     }
                     (new_cap, new_ptr)
                 },
                 None => {
                     let new_cap = DEFAULT_CAPACITY;
-                    let new_ptr = self.a.alloc_array(new_cap)
+                    let new_ptr = self.a.alloc_array(new_cap * elem_size)
                         .expect("Alloc error!");
                     (new_cap, new_ptr)
                 }
@@ -245,7 +244,7 @@ impl<T: Ord, A: Alloc> RawVec<T, A> {
     } 
 
     fn current_layout(&self) -> Option<Layout> {
-        if self.cap == 0 {
+        if self.ptr == ptr::null_mut() {
             return None;
         }
         unsafe {
@@ -293,12 +292,15 @@ mod raw_memory_tests {
     use super::*;
     #[test]
     fn raw_vec_custom() {
-        let a = LuosAlloc::new(LuosMemory::new());
-        let mut vec: RawVec<u128, _> = RawVec::new_in(a);
-        vec.double();
-        vec.double();
-        vec.double();
-        drop(vec);
+        assert_eq!(LuosAlloc::detect_used_bytes(|a| {
+            let mut vec: RawVec<u128, _> = RawVec::new_in(a);
+            vec.double();
+            vec.double();
+            vec.double();
+            let a1 = vec.a.clone();
+            drop(vec);
+            a1
+        }), 0);
     }
 
     #[test]
@@ -353,8 +355,20 @@ mod logic_tests {
     }
 
     #[test]
+    fn test_memory_leak() {
+        assert_eq!(LuosAlloc::detect_used_bytes(|a| {
+            let mut bh: BinaryHeap<u8, LuosAlloc> = BinaryHeap::new_in(a);
+            for &i in &[1, 7, 2, 8, 9, 3, 4, 5, 6] {
+                bh.push(i);
+            }
+            let a1 = bh.vec.a.clone();
+            drop(bh);
+            a1
+        }), 9);
+    }
+    #[test]
     fn test_global_alloc() {
-        let mut bh = BinaryHeap::with_capacity(233);
+        let mut bh = BinaryHeap::new();
         for &i in &[1, 7, 2, 8, 9, 3, 4, 5, 6] {
             println!("{:?}", bh);
             bh.push(i);
